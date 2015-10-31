@@ -60,6 +60,8 @@ typedef struct _PoolInfo
 {
 	SOCKET sockfd;
 	char *PoolName;
+	char *StrippedURL;
+	char *Port;
 	WorkerInfo WorkerData;
 	uint32_t MinerThreadCount;
 	uint32_t *MinerThreads;
@@ -769,8 +771,61 @@ void *StratumThreadProc(void *InfoPtr)
 		
 		if(!FD_ISSET(poolsocket, &readfds))
 		{
-			Log(LOG_ERROR, "Stratum connection to pool timed out.");
-			return(NULL);
+			Log(LOG_NOTIFY, "Stratum connection to pool timed out.");
+			closesocket(poolsocket);
+			poolsocket = Pool->sockfd = ConnectToPool(Pool->StrippedURL, Pool->Port);
+			
+			// TODO/FIXME: This exit is bad and should be replaced with better flow control
+			if(poolsocket == INVALID_SOCKET)
+			{
+				Log(LOG_ERROR, "Unable to reconnect to pool. We be fucked.");
+				exit(0);			
+			}
+			
+			Log(LOG_NOTIFY, "Reconnected to pool... authenticating...");
+			
+			requestobj = json_object();
+			loginobj = json_object();
+			
+			json_object_set_new(loginobj, "login", json_string(Pool->WorkerData.User));
+			json_object_set_new(loginobj, "pass", json_string(Pool->WorkerData.Pass));
+			json_object_set_new(loginobj, "agent", json_string("wolf-xmr-miner/0.1"));
+			
+			// Current XMR pools are a hack job and make us hardcode an id of 1
+			json_object_set_new(requestobj, "method", json_string("login"));
+			json_object_set_new(requestobj, "params", loginobj);
+			json_object_set_new(requestobj, "id", json_integer(1));
+			
+			temp = json_dumps(requestobj, JSON_PRESERVE_ORDER);
+			Log(LOG_NETDEBUG, "Request: %s\n", temp);
+			
+			// TODO/FIXME: Check for super unlikely error here
+			rawloginrequest = malloc(strlen(temp) + 16);
+			strcpy(rawloginrequest, temp);
+			
+			// No longer needed
+			json_decref(requestobj);
+			
+			// Add the very important Stratum newline
+			strcat(rawloginrequest, "\n");
+			
+			bytes = 0;
+				
+			// Send the shit - but send() might not get it all out in one go.
+			do
+			{
+				ret = send(Pool->sockfd, rawloginrequest + bytes, strlen(rawloginrequest) - bytes, 0);
+				if(ret == -1) return(NULL);
+				
+				bytes += ret;
+			} while(bytes < strlen(rawloginrequest));
+			
+			free(rawloginrequest);
+			
+			CurrentJob.Initialized = false;
+			PartialMessageOffset = 0;
+			
+			Log(LOG_NOTIFY, "Reconnected to pool.");
 		}
 		
 		// receive
@@ -1423,6 +1478,8 @@ int main(int argc, char **argv)
 	CurrentQueue.first = CurrentQueue.last = NULL;
 	
 	Pool.sockfd = poolsocket;
+	Pool.StrippedURL = strdup(StrippedPoolURL);
+	Pool.Port = strdup(TmpPort);
 	Pool.WorkerData = Settings.Workers[0];
 	Pool.MinerThreadCount = Settings.TotalThreads;
 	Pool.MinerThreads = (uint32_t *)malloc(sizeof(uint32_t) * Pool.MinerThreadCount);
