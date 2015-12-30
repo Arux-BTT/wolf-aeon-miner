@@ -231,8 +231,8 @@ void keccakf1600_2(ulong *st)
         }
 		
 		
-		/*
-		ulong tmp1 = st[1] ^ bc[0];
+		
+		/*ulong tmp1 = st[1] ^ bc[0];
         
         st[0] ^= bc[4];
         st[1] = rotate(st[6] ^ bc[0], 44UL);
@@ -330,7 +330,7 @@ void AESExpandKey256(uint *keybuf)
 
 #define IDX(x)	((x) * (get_global_size(0)))
 
-__attribute__((reqd_work_group_size(WORKSIZE, 1, 1)))
+__attribute__((reqd_work_group_size(WORKSIZE, 8, 1)))
 __kernel void cn0(__global ulong *input, __global uint4 *Scratchpad, __global ulong *states)
 {
 	ulong State[25];
@@ -371,7 +371,7 @@ __kernel void cn0(__global ulong *input, __global uint4 *Scratchpad, __global ul
 	
 	mem_fence(CLK_LOCAL_MEM_FENCE);
 	
-	#pragma unroll 1
+	/*#pragma unroll 1
 	for(int i = 0; i < 0x2000; ++i)
 	{
 		#if defined(__Hawaii__) || defined(__Tonga__) //|| defined(__Fiji__)
@@ -399,6 +399,18 @@ __kernel void cn0(__global ulong *input, __global uint4 *Scratchpad, __global ul
 		}
 		
 		#endif
+	}*/
+	#pragma unroll 1
+	for(int i = 0; i < 0x2000; ++i)
+	{
+		#pragma unroll
+		for(int j = 0; j < 10; ++j)
+		{
+			text[get_local_id(1)] = AES_Round(AES0, AES1, AES2, AES3, text[get_local_id(1)], ((uint4 *)ExpandedKey1)[j]);
+		}
+		
+		Scratchpad[IDX((i << 3) + get_local_id(1))] = text[get_local_id(1)];
+		
 	}
 	mem_fence(CLK_GLOBAL_MEM_FENCE);
 }
@@ -505,7 +517,7 @@ __kernel void cn2(__global uint4 *Scratchpad, __global ulong *states, __global u
 				text[x] = AES_Round(AES0, AES1, AES2, AES3, text[x], ((uint4 *)ExpandedKey2)[j]);
 		}
 	}
-	
+
 	for(uint i = 0; i < 8; ++i) vstore2(((ulong2 *)text)[i], i + 4, State);
 	
 	keccakf1600_2(State);
@@ -527,7 +539,6 @@ __kernel void cn2(__global uint4 *Scratchpad, __global ulong *states, __global u
 			Branch3[atomic_inc(Branch3 + ThreadCount)] = get_global_id(0) - get_global_offset(0);
 			break;
 	}
-	
 	mem_fence(CLK_GLOBAL_MEM_FENCE);
 }
 
