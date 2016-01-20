@@ -934,8 +934,10 @@ void *StratumThreadProc(void *InfoPtr)
 						return(NULL);
 					}
 					
+					const char *val = json_string_value(blob);
 					pthread_mutex_lock(&JobMutex);
-					CurrentJob.XMRBlob = strdup(json_string_value(blob));
+					ASCIIHexToBinary(CurrentJob.XMRBlob, val, strlen(val));
+					free(CurrentJob.ID);
 					CurrentJob.ID = strdup(json_string_value(jid));
 					CurrentJob.XMRTarget = strtoul(json_string_value(target), NULL, 16);		// This is bad, and I feel bad
 					CurrentJob.Initialized = 1;
@@ -978,8 +980,10 @@ void *StratumThreadProc(void *InfoPtr)
 						return(NULL);
 					}
 					
+					const char *val = json_string_value(blob);
 					pthread_mutex_lock(&JobMutex);
-					CurrentJob.XMRBlob = strdup(json_string_value(blob));
+					ASCIIHexToBinary(CurrentJob.XMRBlob, val, strlen(val));
+					free(CurrentJob.ID);
 					CurrentJob.ID = strdup(json_string_value(jid));
 					CurrentJob.XMRTarget = strtoul(json_string_value(target), NULL, 16);		// This is bad, and I feel bad
 					pthread_mutex_unlock(&JobMutex);
@@ -1032,7 +1036,7 @@ void *MinerThreadProc(void *Info)
 	JobID = strdup(CurrentJob.ID);
 	MTInfo->AlgoCtx.Nonce = StartNonce;
 	
-	ASCIIHexToBinary(TmpWork, CurrentJob.XMRBlob, strlen(CurrentJob.XMRBlob));
+	memcpy(TmpWork, CurrentJob.XMRBlob, sizeof(CurrentJob.XMRBlob));
 	memset(FullTarget, 0xFF, 32);
 	FullTarget[7] = __builtin_bswap32(CurrentJob.XMRTarget);
 	pthread_mutex_unlock(&JobMutex);
@@ -1060,7 +1064,7 @@ void *MinerThreadProc(void *Info)
 			JobID = strdup(CurrentJob.ID);
 			MTInfo->AlgoCtx.Nonce = StartNonce;
 			
-			ASCIIHexToBinary(TmpWork, CurrentJob.XMRBlob, strlen(CurrentJob.XMRBlob));
+			memcpy(TmpWork, CurrentJob.XMRBlob, sizeof(CurrentJob.XMRBlob));
 			memset(FullTarget, 0xFF, 32);
 			FullTarget[7] = __builtin_bswap32(CurrentJob.XMRTarget);
 			pthread_mutex_unlock(&JobMutex);
