@@ -77,9 +77,9 @@ atomic_bool *RestartMining;
 bool ExitFlag = false;
 int ExitPipe[2];
 
-pthread_mutex_t JobMutex = PTHREAD_MUTEX_INITIALIZER;
-JobInfo Jobs[2], *CurrentJob;
-int JobIdx;
+JobInfo Jobs[2];
+volatile JobInfo *CurrentJob;
+volatile int JobIdx;
 
 typedef struct _Share
 {
@@ -913,11 +913,9 @@ retry:
 					ASCIIHexToBinary(NextJob->XMRBlob, val, strlen(val));
 					strcpy(NextJob->ID, json_string_value(jid));
 					NextJob->XMRTarget = __builtin_bswap32(strtoul(json_string_value(target), NULL, 16));
-					pthread_mutex_lock(&JobMutex);
 					CurrentJob = NextJob;
 					JobIdx++;
 					NextJob = &Jobs[JobIdx&1];
-					pthread_mutex_unlock(&JobMutex);
 					Log(LOG_NOTIFY, "New job at diff %g", (double)0xffffffff / CurrentJob->XMRTarget);
 				}
 				json_decref(result);
@@ -961,11 +959,9 @@ retry:
 					ASCIIHexToBinary(NextJob->XMRBlob, val, strlen(val));
 					strcpy(NextJob->ID, json_string_value(jid));
 					NextJob->XMRTarget = __builtin_bswap32(strtoul(json_string_value(target), NULL, 16));
-					pthread_mutex_lock(&JobMutex);
 					CurrentJob = NextJob;
 					JobIdx++;
 					NextJob = &Jobs[JobIdx&1];
-					pthread_mutex_unlock(&JobMutex);
 					
 					// No cleanjobs param, so we flush every time
 					RestartMiners(Pool);
@@ -1001,6 +997,7 @@ void *MinerThreadProc(void *Info)
 	int32_t err;
 	double CurrentDiff;
 	int MyJobIdx;
+	JobInfo *MyJob;
 	char JobID[32];
 	uint32_t Target, TmpWork[20];
 	MinerThreadInfo *MTInfo = (MinerThreadInfo *)Info;
@@ -1014,12 +1011,11 @@ void *MinerThreadProc(void *Info)
 	
 	// First time we're getting work, allocate JobID, and fill it
 	// with the ID of the current job, then generate work. 
-	pthread_mutex_lock(&JobMutex);
 	MyJobIdx = JobIdx;
-	memcpy(TmpWork, CurrentJob->XMRBlob, sizeof(CurrentJob->XMRBlob));
-	Target = CurrentJob->XMRTarget;
-	strcpy(JobID, CurrentJob->ID);
-	pthread_mutex_unlock(&JobMutex);
+	MyJob = CurrentJob;
+	memcpy(TmpWork, MyJob->XMRBlob, sizeof(MyJob->XMRBlob));
+	Target = MyJob->XMRTarget;
+	strcpy(JobID, MyJob->ID);
 	
 	if (MTInfo->PlatformContext) {
 		MTInfo->AlgoCtx.Nonce = StartNonce;
@@ -1039,7 +1035,6 @@ void *MinerThreadProc(void *Info)
 		// If JobID is not equal to the current job ID, generate new work
 		// off the new job information.
 		// If JobID is the same as the current job ID, go hash.
-		pthread_mutex_lock(&JobMutex);
 		if(MyJobIdx != JobIdx)
 		{
 			if (MTInfo->PlatformContext)
@@ -1047,10 +1042,10 @@ void *MinerThreadProc(void *Info)
 			else
 				Log(LOG_DEBUG, "Thread %d, (CPU): Detected new job, regenerating work.", MTInfo->ThreadID);
 			MyJobIdx = JobIdx;
-			memcpy(TmpWork, CurrentJob->XMRBlob, sizeof(CurrentJob->XMRBlob));
-			Target = CurrentJob->XMRTarget;
-			strcpy(JobID, CurrentJob->ID);
-			pthread_mutex_unlock(&JobMutex);
+			MyJob = CurrentJob;
+			memcpy(TmpWork, MyJob->XMRBlob, sizeof(MyJob->XMRBlob));
+			Target = MyJob->XMRTarget;
+			strcpy(JobID, MyJob->ID);
 			
 			if (MTInfo->PlatformContext) {
 				MTInfo->AlgoCtx.Nonce = StartNonce;
@@ -1064,7 +1059,6 @@ void *MinerThreadProc(void *Info)
 		{
 			if (!MTInfo->PlatformContext)
 				++(*nonceptr);
-			pthread_mutex_unlock(&JobMutex);
 		}
 		
 		PrevNonce = MTInfo->AlgoCtx.Nonce;
@@ -1686,13 +1680,9 @@ int main(int argc, char **argv)
 	// miner worker threads.
 	for(;;)
 	{
-		pthread_mutex_lock(&JobMutex);
 		if(CurrentJob) break;
-		pthread_mutex_unlock(&JobMutex);
 		sleep(1);
 	}
-	
-	pthread_mutex_unlock(&JobMutex);
 	
 	// Work is ready - time to create the broadcast and miner threads
 	pthread_create(&BroadcastThread, NULL, PoolBroadcastThreadProc, (void *)&Pool);
